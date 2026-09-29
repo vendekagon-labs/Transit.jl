@@ -141,6 +141,8 @@ dependencies once with `julia --project -e 'using Pkg; Pkg.instantiate()'`.
 
 
 ## Copyright and License
+Copyright © 2026 Vendekagon Labs LLC
+
 Copyright © 2016 Russ Olsen, Ben Kamphaus
 
 This library is a Julia port of the Java and Ruby versions created and maintained by Cognitect, therefore
