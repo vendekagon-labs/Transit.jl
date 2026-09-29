@@ -7,8 +7,8 @@ Transit is a data format and a set of libraries for conveying values between app
 
 This implementation's major.minor version number corresponds to the version of the Transit specification it supports.
 
-Currently only the JSON formats (JSON and JSON-verbose) are implemented.
-MessagePack is **not** implemented yet.
+All three transit encodings are implemented: JSON, JSON-verbose and
+MessagePack. msgpack support is built in, with no extra dependencies.
 
 Transit.jl supports Julia 1.10 and later.
 
@@ -37,11 +37,16 @@ Transit will read or write data using any IO interface in Julia. To write:
 Transit.write(stdout, [123, "hello world", :value, 0, nothing])
 # [123,"hello world","~:value",0,null]
 
-Transit.write(stdout, Dict(:a => 1), true)  # JSON-verbose
+Transit.write(stdout, Dict(:a => 1), :json_verbose)  # or true for verbose
 # {"~:a":1}
 
-Transit.to_transit([1, 2])  # to a String
+Transit.write(io, [1, 2], :msgpack)
+
+Transit.to_transit([1, 2])            # to a String
+Transit.to_transit([1, 2], :msgpack)  # to bytes
 ```
+
+The format is `:json` (the default), `:json_verbose` or `:msgpack`.
 
 To read:
 
@@ -57,13 +62,15 @@ Transit.parse(iobuf)
 #   nothing
 ```
 
+To read msgpack, pass the format: `Transit.parse(io; format=:msgpack)`.
+
 `Transit.parse` reads a single value (a whole stream or string). To read a
 sequence of values as they arrive, e.g. from a pipe or socket, use
 `Transit.eachvalue`, which produces each value as soon as it has been read
 and stops at the end of the stream:
 
 ```julia
-for value in Transit.eachvalue(stdin)
+for value in Transit.eachvalue(stdin)                     # or format=:msgpack
     Transit.write(stdout, value)
 end
 ```

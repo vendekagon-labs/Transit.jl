@@ -1,15 +1,17 @@
-mutable struct Encoder
+mutable struct Encoder{E<:AbstractEmitter}
     verbose::Bool
     encoder_functions::Dict{DataType,Function}
     encodes_to_string::Dict{DataType,Bool}
-    emitter::Emitter
-
-    Encoder(io, verbose=false) =
-		new(verbose,
-		    Dict{DataType,Function}(),
-		    Dict{DataType,Bool}(),
-		    make_emitter(io, verbose))
+    emitter::E
 end
+
+# format is :json, :json_verbose or :msgpack; verbose=true means :json_verbose.
+function Encoder(io, format::Symbol)
+    emitter = make_emitter(io, format)
+    Encoder(format === :json_verbose, Dict{DataType,Function}(), Dict{DataType,Bool}(), emitter)
+end
+
+Encoder(io, verbose::Bool=false) = Encoder(io, verbose ? :json_verbose : :json)
 
 # Registers f(encoder, x, askey) to encode values of type t. encodes_to_string
 # says whether f writes a string, which lets values of type t be map keys
@@ -81,8 +83,15 @@ function encode_value(e::Encoder, u::TURI, askey::Bool)
 end
 
 function encode_value(e::Encoder, u::UUID, askey::Bool)
-    s = string(u)
-    emit(e.emitter, "~u$s", askey)
+    if askey || prefer_strings(e.emitter)
+        s = string(u)
+        emit(e.emitter, "~u$s", askey)
+    else
+        # two signed 64 bit ints, most significant first
+        n = u.value
+        encode_tagged_enumerable(e, "u", (reinterpret(Int64, UInt64(n >> 64)),
+                                          reinterpret(Int64, UInt64(n & typemax(UInt64)))), 2)
+    end
 end
 
 function encode_value(e::Encoder, x::Nothing, askey::Bool)
@@ -90,11 +99,12 @@ function encode_value(e::Encoder, x::Nothing, askey::Bool)
 end
 
 function encode_value(e::Encoder, i::Integer, askey::Bool)
+    min_int, max_int = int_range(e.emitter)
     if i > MAX_INT64 || i < MIN_INT64
         emit(e.emitter, "~n$i", askey)
     elseif askey
         emit(e.emitter, "~i$i", askey)
-    elseif JSON_MIN_INT <= i <= JSON_MAX_INT
+    elseif min_int <= i <= max_int
         emit(e.emitter, i)
     else
         emit(e.emitter, "~i$i", askey)
@@ -107,7 +117,7 @@ function encode_value(e::Encoder, x::BigInt, askey::Bool)
     end
 end
 
-function encode_special_float(emitter::Emitter, x::AbstractFloat, askey::Bool)
+function encode_special_float(emitter::AbstractEmitter, x::AbstractFloat, askey::Bool)
     if isnan(x)
         emit(emitter, "~zNaN", askey)
     elseif x == Inf
@@ -139,7 +149,7 @@ function encode_value(e::Encoder, x::AbstractFloat, askey::Bool)
         if askey
              emit(e.emitter, "~d$x", askey)
          else
-             emit_raw(e.emitter, string(x))
+             emit_float(e.emitter, x)
          end
     end
 end
@@ -187,8 +197,12 @@ end
 function encode_value(e::Encoder, x::DateTime, askey::Bool)
     if e.verbose
         emit(e.emitter, "~t$(format_datetime(x))", askey)
-    else
+    elseif askey || prefer_strings(e.emitter)
         emit(e.emitter, "~m$(datetime_to_millis(x))", askey)
+    else
+        emit_tagged_start(e.emitter, "m")
+        emit(e.emitter, datetime_to_millis(x))
+        emit_tagged_end(e.emitter)
     end
 end
 
@@ -293,7 +307,8 @@ function encode_cmap(e::Encoder, x::AbstractDict)
     emit_tagged_end(e.emitter)
 end
 
-function encode_verbose_map(e::Encoder, x::AbstractDict)
+# A map as a JSON object (json-verbose) or msgpack map.
+function encode_native_map(e::Encoder, x::AbstractDict)
     emit_map_start(e.emitter, length(x))
     for (k, v) in x
         encode(e, k, true)
@@ -305,8 +320,8 @@ end
 function encode_value(e::Encoder, x::AbstractDict, askey::Bool)
     if !has_stringable_keys(e, x)
         encode_cmap(e, x)
-    elseif e.verbose
-        encode_verbose_map(e, x)
+    elseif native_maps(e.emitter)
+        encode_native_map(e, x)
     else
         encode_map(e, x)
     end

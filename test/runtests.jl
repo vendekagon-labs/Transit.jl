@@ -5,6 +5,7 @@ using Test
     @testset "decoder" begin include("decoder.jl") end
     @testset "encoder" begin include("encoder.jl") end
     @testset "roundtrip" begin include("roundtrip.jl") end
+    @testset "msgpack" begin include("msgpack.jl") end
     @testset "cache" begin include("cache.jl") end
     @testset "stream" begin include("stream.jl") end
     @testset "exemplar" begin include("exemplar.jl") end

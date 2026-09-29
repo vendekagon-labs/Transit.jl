@@ -3,16 +3,13 @@
 # Reads each transit value from stdin as it arrives and writes it back to
 # stdout.
 #
-# usage: read-write [json|json-verbose]
+# usage: read-write [json|json-verbose|msgpack]
 
 import Transit
 
-const encoding = isempty(ARGS) ? "json" : ARGS[1]
-encoding in ("json", "json-verbose") ||
-    error("Unsupported encoding: $encoding (expected json or json-verbose)")
-const verbose = encoding == "json-verbose"
+const format = Symbol(replace(isempty(ARGS) ? "json" : ARGS[1], "-" => "_"))
 
-for value in Transit.eachvalue(stdin)
-    Transit.write(stdout, value, verbose)
+for value in Transit.eachvalue(stdin; format=format)
+    Transit.write(stdout, value, format)
     flush(stdout)
 end

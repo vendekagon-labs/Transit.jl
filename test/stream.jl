@@ -8,10 +8,10 @@ const VALUES = Any[1, "~tilde", Any[:abcd, :abcd],
                    Dict{Any,Any}(:abcd => "quote \" and backslash \\ é \U0001f600"),
                    Transit.TSet([1, 2]), nothing]
 
-function written(values, verbose)
+function written(values, format)
     buf = IOBuffer()
     for v in values
-        Transit.write(buf, v, verbose)
+        Transit.write(buf, v, format)
     end
     take!(buf)
 end
@@ -29,22 +29,24 @@ function trickle(data::Vector{UInt8}, n::Int)
     s
 end
 
-for verbose in (false, true)
-    data = written(VALUES, verbose)
-    # sizes that split escapes and multi-byte characters
+for format in (:json, :json_verbose, :msgpack)
+    data = written(VALUES, format)
+    # sizes that split escapes, multi-byte characters and msgpack values
     for n in (1, 2, 3, 7, length(data))
-        @test collect(Transit.eachvalue(trickle(data, n))) == VALUES
+        @test collect(Transit.eachvalue(trickle(data, n); format=format)) == VALUES
     end
 end
 
 @test collect(Transit.eachvalue(IOBuffer(" [\"~#'\",1]\n\t{\"~#'\":2}  \n"))) == [1, 2]
 @test isempty(collect(Transit.eachvalue(IOBuffer(""))))
+@test isempty(collect(Transit.eachvalue(IOBuffer(UInt8[]); format=:msgpack)))
+@test_throws ArgumentError collect(Transit.eachvalue(IOBuffer(UInt8[0x92, 0x01]); format=:msgpack))
 @test_throws ArgumentError collect(Transit.eachvalue(IOBuffer("[1,\"a]")))
 
 # bin/roundtrip is what transit-format's verify harness drives.
 const REPO = joinpath(@__DIR__, "..")
-for (encoding, verbose) in (("json", false), ("json-verbose", true))
-    data = written(VALUES, verbose)
+for (encoding, format) in (("json", :json), ("json-verbose", :json_verbose), ("msgpack", :msgpack))
+    data = written(VALUES, format)
     cmd = `$(Base.julia_cmd()) --project=$REPO --startup-file=no $(joinpath(REPO, "bin", "read-write")) $encoding`
     out = read(pipeline(cmd; stdin=IOBuffer(data)))
     @test out == data

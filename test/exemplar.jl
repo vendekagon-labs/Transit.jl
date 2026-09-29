@@ -3,7 +3,7 @@ module TestExemplar
 using Test
 using Dates
 using Printf
-using DataStructures: cons, list
+using DataStructures: Cons, cons, list
 
 import Transit
 import Transit.TSymbol
@@ -390,18 +390,39 @@ function check(e::Exemplar, how, actual)
   true
 end
 
-function roundtrip(value, verbose)
-  Transit.parse(Transit.to_transit(value, verbose))
+function roundtrip(value, format)
+  Transit.parse(Transit.to_transit(value, format); format=format)
 end
+
+# Whether writing x depends on hash iteration order (so the bytes written
+# can't be compared with another implementation's).
+unordered(x) = false
+unordered(x::AbstractDict) = length(x) > 1 || any(unordered, keys(x)) || any(unordered, values(x))
+unordered(x::TSet) = length(x) > 1 || any(unordered, x)
+unordered(x::Union{AbstractVector,Cons}) = any(unordered, x)
+unordered(x::TaggedValue) = unordered(x.value)
+
+byte_identical = 0
 
 for e in exemplars
   @testset "$(e.file_name)" begin
     @test check(e, "READ", open(Transit.parse, exemplar_path("$(e.file_name).json")))
     @test check(e, "READ VERBOSE", open(Transit.parse, exemplar_path("$(e.file_name).verbose.json")))
-    @test check(e, "ROUNDTRIP", roundtrip(e.value, false))
-    @test check(e, "ROUNDTRIP VERBOSE", roundtrip(e.value, true))
+    mp = read(exemplar_path("$(e.file_name).mp"))
+    @test check(e, "READ MSGPACK", Transit.parse(mp; format=:msgpack))
+    @test check(e, "ROUNDTRIP", roundtrip(e.value, :json))
+    @test check(e, "ROUNDTRIP VERBOSE", roundtrip(e.value, :json_verbose))
+    @test check(e, "ROUNDTRIP MSGPACK", roundtrip(e.value, :msgpack))
+    # Writes the same msgpack bytes as transit-java, where order allows.
+    v = Transit.parse(mp; format=:msgpack)
+    if !unordered(v)
+      @test Transit.to_transit(v, :msgpack) == mp
+      global byte_identical += 1
+    end
   end
 end
+
+@test byte_identical >= 42  # the exemplars whose bytes don't depend on hash order
 
 # Every exemplar in transit-format is covered.
 covered = Set(e.file_name for e in exemplars)

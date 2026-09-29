@@ -20,6 +20,7 @@ module Transit
   include("utilities.jl")
   include("decoder.jl")
   include("emitter.jl")
+  include("msgpack.jl")
   include("encoder.jl")
   include("writer.jl")
   include("reader.jl")

@@ -1,9 +1,24 @@
-function parse(io::IO; decoder::Decoder=Decoder())
-    decode(decoder, JSON.parse(io))
+"""
+    Transit.parse(io::IO; format=:json, decoder=Decoder())
+    Transit.parse(s::AbstractString; format=:json, decoder=Decoder())
+    Transit.parse(bytes::AbstractVector{UInt8}; format=:json, decoder=Decoder())
+
+Read one transit value. `format` is `:json`, `:json_verbose` (read the same
+way as `:json`) or `:msgpack`.
+"""
+function parse(io::IO; format::Symbol=:json, decoder::Decoder=Decoder())
+    check_format(format)
+    decode(decoder, format === :msgpack ? unpack_msgpack(io) : JSON.parse(io))
 end
 
-function parse(s::AbstractString; decoder::Decoder=Decoder())
+function parse(s::AbstractString; format::Symbol=:json, decoder::Decoder=Decoder())
+    check_format(format)
+    format === :msgpack && return parse(IOBuffer(s); format=format, decoder=decoder)
     decode(decoder, JSON.parse(s))
+end
+
+function parse(bytes::AbstractVector{UInt8}; format::Symbol=:json, decoder::Decoder=Decoder())
+    parse(IOBuffer(bytes); format=format, decoder=decoder)
 end
 
 # Finds the end of each top level JSON value in a stream as the data
@@ -93,14 +108,30 @@ struct EachValue
     decoder::Decoder
 end
 
-"""
-    eachvalue(io::IO; decoder=Decoder())
+struct EachMsgPackValue
+    io::IO
+    decoder::Decoder
+end
 
-Iterate over the transit values in `io` (a sequence of JSON or JSON-verbose
-values, as read from a pipe or socket), producing each one as soon as it has
-arrived. Iteration ends at the end of the stream.
 """
-eachvalue(io::IO; decoder::Decoder=Decoder()) = EachValue(JSONScanner(io), decoder)
+    eachvalue(io::IO; format=:json, decoder=Decoder())
+
+Iterate over the transit values in `io` (a sequence of values, as read from a
+pipe or socket), producing each one as soon as it has arrived. Iteration ends
+at the end of the stream. `format` is `:json`, `:json_verbose` or `:msgpack`.
+"""
+function eachvalue(io::IO; format::Symbol=:json, decoder::Decoder=Decoder())
+    check_format(format)
+    format === :msgpack ? EachMsgPackValue(io, decoder) : EachValue(JSONScanner(io), decoder)
+end
+
+Base.IteratorSize(::Type{EachMsgPackValue}) = Base.SizeUnknown()
+Base.eltype(::Type{EachMsgPackValue}) = Any
+
+function Base.iterate(it::EachMsgPackValue, state=nothing)
+    eof(it.io) && return nothing
+    (decode(it.decoder, unpack_msgpack(it.io)), nothing)
+end
 
 Base.IteratorSize(::Type{EachValue}) = Base.SizeUnknown()
 Base.eltype(::Type{EachValue}) = Any

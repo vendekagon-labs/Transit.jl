@@ -90,8 +90,18 @@ function decode_value(e::Decoder, node::AbstractVector, cache::Cache, as_map_key
 end
 
 
-function decode_value(e::Decoder, hash::AbstractDict, cache::Cache, as_map_key::Bool=false)
+# Bytes (msgpack bin data) are left as they are.
+function decode_value(e::Decoder, node::Vector{UInt8}, cache::Cache, as_map_key::Bool=false)
+    node
+end
 
+function decode_value(e::Decoder, hash::AbstractDict, cache::Cache, as_map_key::Bool=false)
+    decode_map(e, hash, cache, as_map_key)
+end
+
+# hash is anything with a length whose iteration gives key => value pairs in
+# the order they were read.
+function decode_map(e::Decoder, hash, cache::Cache, as_map_key::Bool)
     if length(hash) != 1
         h = Dict{Any,Any}()
         for kv in hash

@@ -6,6 +6,7 @@ module TestCache
 
 using Test
 import JSON
+import MsgPack
 import Transit
 using DataStructures: OrderedDict
 using Transit: RollingCache, CACHE_SIZE, encode_key, write!, cache_add!, cache_read
@@ -57,6 +58,16 @@ expected = Any[Dict{Any,Any}(keyname(i) => i for i in 0:N-1),
 
 @test Transit.parse(WRAPPING_JSON) == expected
 @test Transit.to_transit(wrapping_value()) == WRAPPING_JSON
+
+# The same in msgpack, where maps are msgpack maps (built here with MsgPack.jl;
+# this matches transit-clj's output byte for byte).
+const WRAPPING_MSGPACK = MsgPack.pack(Any[OrderedDict(bigmap[i] => bigmap[i+1] for i in 2:2:length(bigmap)),
+                                          OrderedDict("^0" => "~:last"),
+                                          OrderedDict("~:key0000" => "~:first"),
+                                          OrderedDict("^0" => "~:last-again")])
+
+@test Transit.parse(WRAPPING_MSGPACK; format=:msgpack) == expected
+@test Transit.to_transit(wrapping_value(), :msgpack) == WRAPPING_MSGPACK
 
 # The first element of an array is inspected for a tag; it must still only
 # be added to the read cache once.
