@@ -7,17 +7,20 @@ Transit is a data format and a set of libraries for conveying values between app
 
 This implementation's major.minor version number corresponds to the version of the Transit specification it supports.
 
-Currently only the JSON formats are implemented.
-MessagePack is **not** implemented yet. 
+Currently only the JSON formats (JSON and JSON-verbose) are implemented.
+MessagePack is **not** implemented yet.
+
+Transit.jl supports Julia 1.10 and later.
 
 _NOTE: Transit is a work in progress and may evolve based on feedback. As a result, while Transit is a great option for transferring data between applications, it should not yet be used for storing data durably over time. This recommendation will change when the specification is complete._
 
 ## Installation
 
-Transit is available in Julia's METADATA.jl package repository:
+Transit.jl is not in the General registry; add it from GitHub:
 
 ```julia
-Pkg.add("Transit")
+using Pkg
+Pkg.add(url="https://github.com/vendekagon-labs/Transit.jl")
 ```
 
 ## Usage
@@ -28,12 +31,16 @@ To use Transit in a project, import it:
 import Transit
 ```
 
-Transit will read or write data using any IO interface in Julia that is supported
-by the JSON package. To write:
+Transit will read or write data using any IO interface in Julia. To write:
 
 ```julia
-Transit.write(STDOUT, [123, "hello world", :value, 0, nothing])
+Transit.write(stdout, [123, "hello world", :value, 0, nothing])
 # [123,"hello world","~:value",0,null]
+
+Transit.write(stdout, Dict(:a => 1), true)  # JSON-verbose
+# {"~:a":1}
+
+Transit.to_transit([1, 2])  # to a String
 ```
 
 To read:
@@ -47,7 +54,31 @@ Transit.parse(iobuf)
 #   "hello world"
 #   :value       
 #   0             
-#   nothing  
+#   nothing
+```
+
+`Transit.parse` reads a single value (a whole stream or string). To read a
+sequence of values as they arrive, e.g. from a pipe or socket, use
+`Transit.eachvalue`, which produces each value as soon as it has been read
+and stops at the end of the stream:
+
+```julia
+for value in Transit.eachvalue(stdin)
+    Transit.write(stdout, value)
+end
+```
+
+### Custom types
+
+Register an encoder for a type with `Transit.add_encoder` on an `Encoder`,
+and a decoder for a tag with `Transit.add_decoder` on a `Transit.Decoder`,
+which `Transit.parse` and `Transit.eachvalue` take as a `decoder` keyword:
+
+```julia
+d = Transit.Decoder()
+Transit.add_decoder(d, "point", rep -> (rep[1], rep[2]))
+Transit.parse("[\"~#point\",[1,2]]"; decoder=d)
+# (1, 2)
 ```
 
 ## Default Type Mapping
@@ -57,28 +88,50 @@ _NOTE: The type mapping may change in the short term for Transit.jl if any types
 
 | Semantic Type | write accepts | read produces |
 |:--------------|:--------------|:--------------|
-| null| anything of type Void | nothing |
-| string| string | string |
+| null| nothing | nothing |
+| string| AbstractString | String |
 | boolean | Bool | Bool |
-| integer, signed 64 bit| any signed or unsiged int type | Int64 |
-| floating pt decimal| Float32 or Float64 | Float64 |
-| bytes| Array{Int8} | Array{Int8} |
+| integer, signed 64 bit| any signed or unsigned int type | Int64 |
+| floating pt decimal| Float16, Float32 or Float64 | Float64 |
+| bytes| Vector{UInt8}, Vector{Int8} | Vector{UInt8} |
 | keyword | Symbol | Symbol |
-| symbol | Transit.TSymbol | Transit.TSymbol
+| symbol | Transit.TSymbol | Transit.TSymbol |
 | arbitrary precision decimal| Decimals.Decimal, BigFloat | Decimals.Decimal|
-| arbitrary precision integer| BigInt | BigInt |
-| point in time | DateTime | DateTime |
-| point in time RFC 33339 | Date | Date |
-| uuid | Base.Random.UUID| Base.Random.UUID|
-| uri | Transit.TURI | Transit.TURI |
+| arbitrary precision integer| BigInt, or any int outside Int64 | BigInt |
+| point in time | DateTime, Date | DateTime (UTC) |
+| uuid | UUIDs.UUID | UUIDs.UUID |
+| uri | Transit.TURI, URIs.URI (with URIs.jl loaded) | Transit.TURI |
 | char | Char | Char |
-| special numbers | Inf, Nan| Inf, Nan
-| array | arrays | Any[] |
-| map | Dict | Dict{Any,Any} | 
-| set |  Transit.TSet, Set | Transit.TSet |
-| list | DataStructures.Cons | DataStructures.Cons |
-| map w/ composite keys |  Dict{Array,Any} |  Dict{Array,Any} |
-| link | Transit.TLink | Transit.TLink |
+| special numbers | Inf, NaN| Inf, NaN |
+| array | arrays | Vector{Any} |
+| map | AbstractDict | Dict{Any,Any} |
+| set |  Transit.TSet, AbstractSet | Transit.TSet |
+| list | Tuple, DataStructures.Cons | DataStructures.Cons |
+| map w/ composite keys |  AbstractDict |  Dict{Any,Any} |
+| link | Transit.Link | Transit.Link |
+| ratio | Rational | Rational |
+
+Values with tags Transit.jl doesn't know are read as `Transit.TaggedValue`s
+and written back out unchanged.
+
+`Transit.TSet` exists because `1 == true` in Julia, so a `Set` can't hold both
+while a transit set can.
+
+## Development
+
+Run the tests with:
+
+```sh
+julia --project -e 'using Pkg; Pkg.test()'
+```
+
+The exemplar tests read the example files from
+[transit-format](http://github.com/cognitect/transit-format), which is
+expected in the `test/transit-format` submodule, checked out next to
+Transit.jl, or at `$TRANSIT_FORMAT_DIR`.
+
+transit-format's verify harness drives `bin/roundtrip`. Install the
+dependencies once with `julia --project -e 'using Pkg; Pkg.instantiate()'`.
 
 
 ## Copyright and License

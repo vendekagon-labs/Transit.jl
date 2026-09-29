@@ -1,6 +1,6 @@
 module TestTSet
 
-using Base.Test
+using Test
 using Transit
 
 
@@ -35,5 +35,15 @@ s3 = Transit.TSet([Transit.TSymbol("ccc"), Transit.TSymbol("aaa"),  Transit.TSym
 
 @test c == c
 @test c == c1
+
+# 1 == true in Julia, but a TSet keeps them apart.
+mixed = Transit.TSet(Any[1, true])
+@test length(mixed) == 2
+@test 1 in mixed && true in mixed
+@test !(2 in mixed)
+@test hash(a) == hash(a1)
+@test isempty(Transit.TSet())
+@test sort(collect(b)) == [3, 4]
+@test repr(Transit.TSet([1])) == "TSet(1)"
 
 end

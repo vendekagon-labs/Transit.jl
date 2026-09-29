@@ -1,39 +1,47 @@
-type Decoder
-    decoderFunctions
+function decode_special_number(x)
+    if x == "NaN"
+        NaN
+    elseif x == "INF"
+        Inf
+    elseif x == "-INF"
+        -Inf
+    else
+        throw(ArgumentError("Don't know how to decode special number: $x"))
+    end
+end
 
-    Decoder() = new(Dict{ASCIIString,Function}(
+# A uuid is a string, or two signed 64 bit ints (most significant first).
+decode_uuid(x::AbstractString) = UUID(x)
+decode_uuid(x::AbstractVector) =
+    UUID((UInt128(reinterpret(UInt64, Int64(x[1]))) << 64) | reinterpret(UInt64, Int64(x[2])))
+
+mutable struct Decoder
+    decoderFunctions::Dict{String,Function}
+
+    Decoder() = new(Dict{String,Function}(
                         "_"  => (x -> nothing),
-                        ":"  => symbol,
+                        ":"  => (x -> Symbol(x)),
                         "\$" => (x -> TSymbol(x)),
                         "?"  => (x -> x == "t"),
                         "b"  => base64decode,
-                        "c"  => (x -> x[1]),
+                        "c"  => first,
                         "i"  => (x -> Base.parse(Int64, x)),
                         "d"  => (x -> Base.parse(Float64, x)),
-                        "f"  => (x -> decimal(lowercase(x))),
+                        "f"  => (x -> Base.parse(Decimal, x)),
                         "r"  => (x -> TURI(x)),
                         "n"  => (x -> Base.parse(BigInt, x)),
-                        "u"  => (x -> Base.Random.UUID(x)), # only string case so far
+                        "u"  => decode_uuid,
                         "t"  => parsedatetime,
-                        "m"  => (x -> Dates.unix2datetime(Base.parse(Float64, x) / 1000.)), # maybe not sufficient
-                        "z"  => (x -> if (x == "NaN")
-                                          NaN
-                                      elseif (x == "INF")
-                                          Inf
-                                      elseif (x == "-INF")
-                                          -Inf
-                                      else
-                                          throw(string("Don't know how to encode: ", x))
-                                      end),
+                        "m"  => millis_to_datetime,
+                        "z"  => decode_special_number,
 
                         # tag decoders
-                        "'"  => (x -> x),
+                        "'"  => identity,
                         "set" => (x -> TSet(x)),
-                        "link" => (x -> Link(x...)),
+                        "link" => link_from_map,
                         "list" => tolist,
                         "ratio" => (x -> x[1]//x[2]),
-                        "cmap" => (x -> [a[1] => a[2]
-                                         for a in zip(x[1:2:end], x[2:2:end])])
+                        "cmap" => (x -> Dict{Any,Any}(x[i] => x[i+1] for i in 1:2:length(x)))
                     ))
 end
 
@@ -53,14 +61,10 @@ function decode_value(e::Decoder, node::Any, cache::Cache, as_map_key::Bool=fals
     node
 end
 
-function decode_value(e::Decoder, node::Bool)
-    node ? true : false # where we may have to add TTrue, TFalse for set issue
-end
-
-function decode_value(e::Decoder, node::Array{Any,1}, cache::Cache, as_map_key::Bool=false)
+function decode_value(e::Decoder, node::AbstractVector, cache::Cache, as_map_key::Bool=false)
     if !isempty(node)
         if node[1] == MAP_AS_ARRAY
-            returned_dict = Dict()
+            returned_dict = Dict{Any,Any}()
             for i in 2:2:length(node)
                 key = decode_value(e, node[i], cache, true)
                 value = decode_value(e, node[i+1], cache, as_map_key)
@@ -68,18 +72,25 @@ function decode_value(e::Decoder, node::Array{Any,1}, cache::Cache, as_map_key::
             end
             return returned_dict
         else
+            # Each element must be decoded exactly once, in order, to keep
+            # the cache in step with the writer.
             decoded = decode_value(e, node[1], cache, as_map_key)
             if isa(decoded, Tag)
                 return decode_value(e, decoded, node[2], cache, as_map_key)
             end
+            result = Any[decoded]
+            for i in 2:length(node)
+                push!(result, decode_value(e, node[i], cache, as_map_key))
+            end
+            return result
         end
     end
 
-    [decode_value(e, x, cache, as_map_key) for x in node]
+    Any[]
 end
 
 
-function decode_value(e::Decoder, hash::Dict, cache::Cache, as_map_key::Bool=false)
+function decode_value(e::Decoder, hash::AbstractDict, cache::Cache, as_map_key::Bool=false)
 
     if length(hash) != 1
         h = Dict{Any,Any}()
@@ -102,26 +113,31 @@ end
 
 function decode_value(e::Decoder, s::AbstractString, cache::Cache, as_map_key::Bool=false)
     if iscachekey(s)
-        return decode_value(e, read(cache, s), cache, as_map_key)
+        return parse_string(e, cache_read(cache, s))
     end
 
     if iscacheable(s, as_map_key)
-        write!(cache, s)
+        cache_add!(cache, s)
     end
 
-    if !startswith(s, ESC)
+    parse_string(e, s)
+end
+
+function parse_string(e::Decoder, s::AbstractString)
+    if !startswith(s, ESC) || length(s) < 2
         s
     elseif startswith(s, TAG)
         Tag(s[3:end])
-    elseif startswith(s, ESC_ESC) ||  startswith(s, ESC_SUB) || startswith(s, ESC_RES)
+    elseif multi_startswith(s, ESC_ESC, ESC_SUB, ESC_RES)
         s[2:end]
-    elseif startswith(s, ESC)
-        #2:2 is necessary to get str instead of char
-        tag = s[2:2]
+    else
+        i = nextind(s, 1)
+        tag = string(s[i])
+        rep = s[nextind(s, i):end]
         if haskey(e.decoderFunctions, tag)
-            e[tag](s[3:end])
+            e[tag](rep)
         else
-	    TaggedValue(tag, s[3:end])
+            TaggedValue(tag, rep)
         end
     end
 end

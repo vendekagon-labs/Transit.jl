@@ -1,10 +1,10 @@
-include("../src/Transit.jl")
-module TestTransit
+module TestExemplar
 
-using Base.Test
-using DataStructures  
+using Test
+using Dates
+using Printf
+using DataStructures: cons, list
 
-import JSON
 import Transit
 import Transit.TSymbol
 import Transit.TSet
@@ -21,7 +21,7 @@ end
 
 function array_of_symbols(n, m)
   syms = map(x -> Symbol(@sprintf("key%04d", x)), 0:(n-1))
-  collect(take(cycle(syms), m))
+  collect(Iterators.take(Iterators.cycle(syms), m))
 end
 
 function dict_of_size(n)
@@ -33,11 +33,7 @@ function dict_of_size(n)
 end
 
 function list_of(a)
-  result = list()
-  for item in reverse(a)
-    result = cons(item, result)
-  end
-  result
+  list(a...)
 end
 
 function dict_of(a...)
@@ -69,7 +65,7 @@ map_nested = Dict{Any,Any}(:simple => map_simple, :mixed => map_mixed)
 
 vector_simple  = Any[1, 2, 3]
 
-vector_mixed  = Any[0, 1, 2.0, true, false, UTF8String("five"), :six, TSymbol(:seven), UTF8String("~eight"), nothing]
+vector_mixed  = Any[0, 1, 2.0, true, false, "five", :six, TSymbol(:seven), "~eight", nothing]
 
 vector_nested = Any[vector_simple, vector_mixed]
 
@@ -92,12 +88,12 @@ powers_two =
    18446744073709551616, 36893488147419103232]
 
 
-interesting_ints = foldl(vcat, [], map(x-> Array(range_centered_on(x, 2)), powers_two))
+interesting_ints = foldl(vcat, map(x-> collect(range_centered_on(x, 2)), powers_two); init=Any[])
 
-uuids = [Base.Random.UUID( "5a2cbea3-e8c6-428b-b525-21239370dd55"),
-         Base.Random.UUID( "d1dc64fa-da79-444b-9fa4-d4412f427289"),
-         Base.Random.UUID( "501a978e-3a3e-4060-b3be-1cf2bd4b1a38"),
-         Base.Random.UUID( "b3ba141a-a776-48e4-9fae-a28ea8571f58")]
+uuids = [Base.UUID( "5a2cbea3-e8c6-428b-b525-21239370dd55"),
+         Base.UUID( "d1dc64fa-da79-444b-9fa4-d4412f427289"),
+         Base.UUID( "501a978e-3a3e-4060-b3be-1cf2bd4b1a38"),
+         Base.UUID( "b3ba141a-a776-48e4-9fae-a28ea8571f58")]
 
 uris = [Transit.TURI("http://example.com"),
         Transit.TURI("ftp://example.com"),
@@ -111,9 +107,9 @@ symbols = map(x->TSymbol(x), keywords)
 
 dates =  map(x-> Dates.unix2datetime(x), [-6106017600, 0, 946728000, 1396909037])
 
-immutable Exemplar
-  file_name::AbstractString
-  description::AbstractString
+struct Exemplar
+  file_name::String
+  description::String
   value::Any
 end
 
@@ -143,9 +139,9 @@ exemplars = [
     Exemplar( "strings_hat", "A vector of strings starting with ^",
 	      map(x -> "^$x", small_strings)),
 
-    Exemplar( "small_ints", "A vector of eleven small integers", Array(range_centered_on(0))),
+    Exemplar( "small_ints", "A vector of eleven small integers", collect(range_centered_on(0))),
 
-    Exemplar( "ints", "vector of ints", Array(0:127)),
+    Exemplar( "ints", "vector of ints", collect(0:127)),
 
     Exemplar( "ints_interesting", "A vector of possibly interesting positive integers",
               interesting_ints),
@@ -313,7 +309,12 @@ exemplars = [
       "cmap_pathological",
       "cmap pathological case discovered in transit-js and transit-cljs",
       Any[Dict(Symbol("any-value") => Dict(Any["this vector makes this a cmap"] => "any value", "any string" => :victim)),
-          Dict(:victim => Symbol("any-other-value"))])
+          Dict(:victim => Symbol("any-other-value"))]),
+
+    Exemplar(
+      "cmap_null_key",
+      "cmap with a null key",
+      Dict{Any,Any}(nothing => "null as map key", Any[1,2] => "Array as key to force cmap"))
 ]
 
 function issame(x::Any, y::Any)
@@ -373,28 +374,41 @@ function findsame(x, col)
     false
 end
 
-function test_reading(e::Exemplar)
-  path = "../transit-format/examples/0.8/simple/$(e.file_name).json"
-  actual = Transit.parse(open(path))
+# transit-format is expected at $TRANSIT_FORMAT_DIR, in the test/transit-format
+# submodule, or checked out next to this repo.
+function transit_format_dir()
+  get(ENV, "TRANSIT_FORMAT_DIR") do
+    submodule = joinpath(@__DIR__, "transit-format")
+    isdir(joinpath(submodule, "examples")) ? submodule : joinpath(@__DIR__, "..", "..", "transit-format")
+  end
+end
+
+exemplar_path(name) = joinpath(transit_format_dir(), "examples", "0.8", "simple", name)
+
+function check(e::Exemplar, how, actual)
   if !issame(e.value, actual)
-      println("\nREAD: $(e.file_name): Expected:\n$(e.value)\nBut got:\n$actual")
+      println("\n$how: $(e.file_name): Expected:\n$(e.value)\nBut got:\n$actual")
       return false
   end
   true
 end
 
-function test_exemplars()
-    failures = 0
-    for e in exemplars
-      failures = test_reading(e) ? failures : failures + 1
-    end
-
-    if failures > 0
-        println("Number of failures: $failures")
-    end
-    failures == 0
+function roundtrip(value, verbose)
+  Transit.parse(Transit.to_transit(value, verbose))
 end
 
-@test test_exemplars()
+for e in exemplars
+  @testset "$(e.file_name)" begin
+    @test check(e, "READ", open(Transit.parse, exemplar_path("$(e.file_name).json")))
+    @test check(e, "READ VERBOSE", open(Transit.parse, exemplar_path("$(e.file_name).verbose.json")))
+    @test check(e, "ROUNDTRIP", roundtrip(e.value, false))
+    @test check(e, "ROUNDTRIP VERBOSE", roundtrip(e.value, true))
+  end
+end
+
+# Every exemplar in transit-format is covered.
+covered = Set(e.file_name for e in exemplars)
+available = Set(replace(f, ".edn" => "") for f in readdir(dirname(exemplar_path("x"))) if endswith(f, ".edn"))
+@test setdiff(available, covered) == Set()
 
 end

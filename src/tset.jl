@@ -1,45 +1,30 @@
-import Base.in
-import Base.==
-import Base.length
-import Base.start
-import Base.done
-import Base.next
-import Base.string
-import Base.show
-import Base.enumerate
-import Base.isequal
-import Base.print
-import Base.println
-
-
-immutable TSet
+# A set that keeps values of different types apart, even when they compare
+# equal: in Julia 1 == true, so a Set can't hold both, but transit sets can.
+struct TSet
     dict::Dict{Tuple{Any,DataType},Any}
 
     TSet() = new(Dict{Tuple{Any,DataType},Any}())
-    TSet(itr) = new([(x, typeof(x)) => x for x in itr])
+    TSet(itr) = new(Dict{Tuple{Any,DataType},Any}((x, typeof(x)) => x for x in itr))
 end
 
-in(x, s::TSet) = haskey(s.dict, (x, typeof(x)))
-==(s::TSet, t::TSet) = ==(s.dict, t.dict)
-length(s::TSet) = length(s.dict)
-start(s::TSet) = start(s.dict)
-function next(s::TSet, x::Any)
-    nextdict = next(s.dict, x)
-    return (nextdict[1][2], nextdict[2])
+Base.in(x, s::TSet) = haskey(s.dict, (x, typeof(x)))
+Base.:(==)(s::TSet, t::TSet) = s.dict == t.dict
+Base.length(s::TSet) = length(s.dict)
+Base.isempty(s::TSet) = isempty(s.dict)
+Base.eltype(::Type{TSet}) = Any
+Base.iterate(s::TSet, state...) = iterate(values(s.dict), state...)
+
+function Base.show(io::IO, s::TSet)
+    print(io, "TSet(")
+    join(io, (repr(a) for a in s), ", ")
+    print(io, ")")
 end
-
-done(s::TSet, state::Any) = done(s.dict, state)
-enumerate(s::TSet) = enumerate(values(s.dict))
-string(s::TSet) = "TSet($(join(map(string, [a for a in s]), ",")))"
-show(s::TSet) = println(string(s))
-print(io::IO, s::TSet) = print(io, string(s))
-
 
 const hashtset_seed = UInt === UInt64 ? 0x852ada37cfe8e0ce : 0xcfe8e0ce
-function hash(s::TSet, h::UInt)
+function Base.hash(s::TSet, h::UInt)
     h = hash(hashtset_seed, h)
     for x in s
-        h $= hash(x)
+        h ⊻= hash(x)
     end
     return h
 end

@@ -6,7 +6,6 @@ end
 function to_transit(x::Any, verbose=false)
     let buf = IOBuffer()
         write(buf, x, verbose)
-        s = takebuf_string(buf)
-	s
+        String(take!(buf))
     end
 end

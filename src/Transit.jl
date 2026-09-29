@@ -1,13 +1,14 @@
 module Transit
   import JSON
-  import Base.getindex
-  import Base
+  import Base: getindex
 
-  using DataStructures
-  using URIParser
-  using Decimals
+  using Base64
+  using DataStructures: Cons, Nil, cons, list, nil
+  using Dates
+  using Decimals: Decimal
+  using UUIDs: UUID
 
-  export Encoder, encode, parse, decode
+  export Encoder, encode, decode
 
   include("tagged_value.jl")
   include("tsymbol.jl")
@@ -16,8 +17,8 @@ module Transit
   include("link.jl")
   include("constants.jl")
   include("cache.jl")
-  include("decoder.jl")
   include("utilities.jl")
+  include("decoder.jl")
   include("emitter.jl")
   include("encoder.jl")
   include("writer.jl")

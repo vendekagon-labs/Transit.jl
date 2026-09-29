@@ -1,55 +1,18 @@
-#!/usr/bin/env julia
+#!/usr/bin/env -S julia --project --startup-file=no
 
-# works in that command:
-# echo "[\"~#'\",\"~zNaN\"][\"~#'\",\"~zNaN\"]"  && echo "[\"~#'\",\"~zNaN\"] [\"~#'\",\"~zNaN\"]" | bin/read-write && echo
-# returns ["~#'","~zNaN"]["~#'","~zNaN"]
+# Reads each transit value from stdin as it arrives and writes it back to
+# stdout.
+#
+# usage: read-write [json|json-verbose]
 
-include("../src/Transit.jl")
 import Transit
 
-debug = false
-#debug = true
+const encoding = isempty(ARGS) ? "json" : ARGS[1]
+encoding in ("json", "json-verbose") ||
+    error("Unsupported encoding: $encoding (expected json or json-verbose)")
+const verbose = encoding == "json-verbose"
 
-if debug
-    log_f = open("/tmp/log.txt", "w")
+for value in Transit.eachvalue(stdin)
+    Transit.write(stdout, value, verbose)
+    flush(stdout)
 end
-
-function log_msg(msg)
-    if debug
-        println(log_f, string(msg))
-        flush(log_f)
-    end
-end
-
-verbose = false
-
-if length(ARGS) <= 0
-    verbose = false
-elseif ARGS[1] == "json"
-    verbose = false
-elseif ARGS[1] == "json-verbose"
-    verbose = true
-else
-    throw(Error("Bad paramter: %(ARGV[1])"))
-end
-  
-while !eof(STDIN)
-  log_msg("reading")
-  json_data = JSON.parse(STDIN)
-
-  log_msg(json_data)
-
-  d = Transit.Decoder() 
-  data = Transit.decode(d, json_data)
-  log_msg("Julia value: $data")
-
-  json = Transit.to_transit(data, verbose)
-  log_msg("Transit: $json")
-  log_msg(json)
-  log_msg("\n")
-
-  write(STDOUT, json)
-  flush(STDOUT)
-  log_msg("written")
-end
-log_msg("done")

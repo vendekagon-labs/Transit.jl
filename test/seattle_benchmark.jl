@@ -1,34 +1,20 @@
-include("../src/Transit.jl")
-# To run this, Pkg.clone the Benchmarks.jl package at:
+# To run this, BenchmarkTools needs to be available, e.g. in your default
+# environment:
 #
-# https://github.com/johnmyleswhite/Benchmarks.jl/
-#
-# with:
-#
-# > Pkg.clone("https://github.com/johnmyleswhite/Benchmarks.jl")
+# julia -e 'using Pkg; Pkg.add("BenchmarkTools")'
+# julia --project test/seattle_benchmark.jl
 
-import Benchmarks
+using BenchmarkTools
 import Transit
 
-const SEATTLEDIR = "../transit-format/examples/0.8/"
-const JSONFILE = string(SEATTLEDIR, "example.json")
-const JSONVERBOSEFILE = string(SEATTLEDIR, "example.verbose.json")
-
-function run_tests(data::AbstractString)
-    io = IOBuffer(data)
-    Transit.parse(io)
-end
-
-function read_json()
-    readall(open(JSONFILE))
-end
-
-function read_json_verbose()
-    readall(open(JSONVERBOSEFILE))
-end
+const SEATTLEDIR = joinpath(get(ENV, "TRANSIT_FORMAT_DIR", joinpath(@__DIR__, "..", "..", "transit-format")),
+                            "examples", "0.8")
+const JSONFILE = joinpath(SEATTLEDIR, "example.json")
+const JSONVERBOSEFILE = joinpath(SEATTLEDIR, "example.verbose.json")
 
 println("Transit JSON parse")
-println(@Benchmarks.benchmark run_tests(read_json()))
+display(@benchmark Transit.parse(data) setup=(data = read(JSONFILE, String)))
 println("\n")
 println("Transit JSON verbose parse")
-println(@Benchmarks.benchmark run_tests(read_json_verbose()))
+display(@benchmark Transit.parse(data) setup=(data = read(JSONVERBOSEFILE, String)))
+println()

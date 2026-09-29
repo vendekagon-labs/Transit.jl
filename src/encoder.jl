@@ -1,7 +1,7 @@
-type Encoder
+mutable struct Encoder
     verbose::Bool
-    encoder_functions
-    encodes_to_string
+    encoder_functions::Dict{DataType,Function}
+    encodes_to_string::Dict{DataType,Bool}
     emitter::Emitter
 
     Encoder(io, verbose=false) =
@@ -11,60 +11,44 @@ type Encoder
 		    make_emitter(io, verbose))
 end
 
+# Registers f(encoder, x, askey) to encode values of type t. encodes_to_string
+# says whether f writes a string, which lets values of type t be map keys
+# without resorting to a cmap.
 function add_encoder(e::Encoder, t::DataType, f::Function, encodes_to_string::Bool)
     e.encoder_functions[t] = f
     e.encodes_to_string[t] = encodes_to_string
 end
 
 function encode(e::Encoder, x::Any, askey=false)
-    if haskey(e.encoder_functions, typeof(x))
-        e.encoder_functions[typeof(x)](e, x, askey)
-    else
+    f = get(e.encoder_functions, typeof(x), nothing)
+    if f === nothing
         encode_value(e, x, askey)
+    else
+        f(e, x, askey)
     end
 end
 
-function encodes_to_string(e::Encoder, x::Any)
-    let t = typeof(x)
-        if haskey(e.encoder_functions, t)
-            e.encodes_to_string[t](e, x)
-        else
-            encodes_to_string(e, x)
-        end
-    end
-end
-
-Composite = Union{AbstractArray, Dict}
-
-Simple = Union{AbstractString, Integer, BigInt, AbstractFloat, TSymbol, Symbol, Bool}
-
-function encode_top_level(e::Encoder, x::Simple)
-    encode_quoted(e, x)
-end
-
-function encode_top_level(e::Encoder, x::Composite)
-    encode(e, x)
+# Whether x is written as a string, taking registered encoders into account.
+function stringable(e::Encoder, x::Any)
+    get(() -> encodes_to_string(e, x), e.encodes_to_string, typeof(x))
 end
 
 function encode_top_level(e::Encoder, x::Any)
-    if encodes_to_string(e, x)
+    if stringable(e, x)
         encode_quoted(e, x)
     else
-        encode(e, x, false) 
+        encode(e, x, false)
     end
 end
 
-
 function encode_quoted(e::Encoder, x::Any)
-    emit_array_start(e.emitter)
-    emit(e.emitter, "~#'", true)
-    emit_array_sep(e.emitter)
+    emit_tagged_start(e.emitter, QUOTE)
     encode(e, x, false)
-    emit_array_end(e.emitter)
+    emit_tagged_end(e.emitter)
 end
 
 function encode_value(e::Encoder, s::AbstractString, askey::Bool)
-    if startswith(s, "~") || startswith(s, "^")
+    if multi_startswith(s, ESC, SUB, RES)
         emit(e.emitter, "~$s", askey)
     else
         emit(e.emitter, s, askey)
@@ -87,13 +71,8 @@ function encode_value(e::Encoder, b::Bool, askey::Bool)
     end
 end
 
-function encode_value(e::Encoder, x::Char, askey::Bool)
+function encode_value(e::Encoder, x::AbstractChar, askey::Bool)
     emit(e.emitter, "~c$x", askey)
-end
-
-function encode_value(e::Encoder, u::URI, askey::Bool)
-    s = string(u)
-    emit(e.emitter, "~r$s", askey)
 end
 
 function encode_value(e::Encoder, u::TURI, askey::Bool)
@@ -101,22 +80,22 @@ function encode_value(e::Encoder, u::TURI, askey::Bool)
     emit(e.emitter, "~r$s", askey)
 end
 
-function encode_value(e::Encoder, u::Base.Random.UUID, askey::Bool)
+function encode_value(e::Encoder, u::UUID, askey::Bool)
     s = string(u)
     emit(e.emitter, "~u$s", askey)
 end
 
-function encode_value(e::Encoder, x::Void, askey::Bool)
+function encode_value(e::Encoder, x::Nothing, askey::Bool)
     emit_null(e.emitter, askey)
 end
 
 function encode_value(e::Encoder, i::Integer, askey::Bool)
-    if askey
-        emit(e.emitter, "~i$i", askey)
-    elseif (i <= JSON_MAX_INT && i >= JSON_MIN_INT)
-        emit(e.emitter, i)
-    elseif i > MAX_INT64 || i < MIN_INT64
+    if i > MAX_INT64 || i < MIN_INT64
         emit(e.emitter, "~n$i", askey)
+    elseif askey
+        emit(e.emitter, "~i$i", askey)
+    elseif JSON_MIN_INT <= i <= JSON_MAX_INT
+        emit(e.emitter, i)
     else
         emit(e.emitter, "~i$i", askey)
     end
@@ -165,27 +144,21 @@ function encode_value(e::Encoder, x::AbstractFloat, askey::Bool)
     end
 end
 
-function encode_iterator(e::Encoder, iter)
-    for (i, x) in iter
-        emit_array_sep(e.emitter, i)
+function encode_tagged_enumerable(e::Encoder, tag::AbstractString, iter, size::Integer)
+    emit_tagged_start(e.emitter, tag)
+    emit_array_start(e.emitter, size)
+    for x in iter
         encode(e, x, false)
     end
-end
-
-function encode_tagged_enumerable(e::Encoder, tag::AbstractString, iter)
-    emit_array_start(e.emitter)
-    emit_tag(e.emitter, tag)
-    emit_array_sep(e.emitter)
-
-    emit_array_start(e.emitter)
-    encode_iterator(e, iter) 
     emit_array_end(e.emitter)
-    emit_array_end(e.emitter)
+    emit_tagged_end(e.emitter)
 end
 
 function encode_value(e::Encoder, a::AbstractArray, askey::Bool)
-    emit_array_start(e.emitter)
-    encode_iterator(e, enumerate(a))
+    emit_array_start(e.emitter, length(a))
+    for x in a
+        encode(e, x, false)
+    end
     emit_array_end(e.emitter)
 end
 
@@ -193,8 +166,18 @@ function encodes_to_string(e::Encoder, x::AbstractArray)
     false
 end
 
+# Bytes
+function encode_value(e::Encoder, x::AbstractVector{<:Union{UInt8,Int8}}, askey::Bool)
+    encoded = base64encode(x)
+    emit(e.emitter, "~b$encoded", askey)
+end
+
+function encodes_to_string(e::Encoder, x::AbstractVector{<:Union{UInt8,Int8}})
+    true
+end
+
 function encode_value(e::Encoder, r::Rational, askey::Bool)
-    encode_tagged_enumerable(e, "#ratio", enumerate([num(r), den(r)]))
+    encode_tagged_enumerable(e, "ratio", (numerator(r), denominator(r)), 2)
 end
 
 function encodes_to_string(e::Encoder, x::Rational)
@@ -202,14 +185,11 @@ function encodes_to_string(e::Encoder, x::Rational)
 end
 
 function encode_value(e::Encoder, x::DateTime, askey::Bool)
-    let millis = trunc(Int64, Dates.datetime2unix(x) * 1000)
-        emit(e.emitter, "~m$millis", askey)
+    if e.verbose
+        emit(e.emitter, "~t$(format_datetime(x))", askey)
+    else
+        emit(e.emitter, "~m$(datetime_to_millis(x))", askey)
     end
-end
-
-function encode_value(e::Encoder, x::Array{Int8}, askey::Bool)
-    encoded = base64encode(x)
-    emit(e.emitter, "~b$encoded", askey)
 end
 
 function encode_value(e::Encoder, x::Date, askey::Bool)
@@ -217,11 +197,15 @@ function encode_value(e::Encoder, x::Date, askey::Bool)
 end
 
 function encode_value(e::Encoder, x::Tuple, askey::Bool)
-    encode_tagged_enumerable(e, "#list", enumerate(x))
+    encode_tagged_enumerable(e, "list", x, length(x))
+end
+
+function encodes_to_string(e::Encoder, x::Tuple)
+    false
 end
 
 function encode_value(e::Encoder, x::Cons, askey::Bool)
-    encode_tagged_enumerable(e, "#list", enumerate(x))
+    encode_tagged_enumerable(e, "list", x, length(x))
 end
 
 function encodes_to_string(e::Encoder, x::Cons)
@@ -229,29 +213,22 @@ function encodes_to_string(e::Encoder, x::Cons)
 end
 
 function encode_value(e::Encoder, x::Nil, askey::Bool)
-    encode_tagged_enumerable(e, "#list", [])
+    encode_tagged_enumerable(e, "list", (), 0)
 end
 
 function encodes_to_string(e::Encoder, x::Nil)
     false
 end
 
-
-function encodes_to_string(e::Encoder, x::Tuple)
-    false
-end
-
-# Maybe can use AbstractSet but instead but need to figure out version boundary
-# for when it's available
-function encode_value(e::Encoder, x::Set, askey::Bool)
-    encode_tagged_enumerable(e, "#set", enumerate(x))
+function encode_value(e::Encoder, x::AbstractSet, askey::Bool)
+    encode_tagged_enumerable(e, "set", x, length(x))
 end
 
 function encode_value(e::Encoder, x::TSet, askey::Bool)
-    encode_tagged_enumerable(e, "#set", enumerate(x))
+    encode_tagged_enumerable(e, "set", x, length(x))
 end
 
-function encodes_to_string(e::Encoder, x::Set)
+function encodes_to_string(e::Encoder, x::AbstractSet)
     false
 end
 
@@ -260,82 +237,72 @@ function encodes_to_string(e::Encoder, x::TSet)
 end
 
 function encode_value(e::Encoder, x::Link, askey::Bool)
-    let a = [x.href, x.rel, x.name, x.prompt, x.render]
-        encode_tagged_enumerable(e, "#link", enumerate(a))
-    end
+    emit_tagged_start(e.emitter, "link")
+    encode(e, link_to_map(x), false)
+    emit_tagged_end(e.emitter)
 end
 
 function encodes_to_string(e::Encoder, x::Link)
     false
 end
 
+# A tagged value with a one character tag and a string rep (as read from an
+# unrecognized "~x..." string) is written back as a string.
+function scalar_tagged_value(x::TaggedValue)
+    length(x.tag) == 1 && x.value isa AbstractString
+end
+
 function encode_value(e::Encoder, x::TaggedValue, askey::Bool)
-    emit_array_start(e.emitter)
-    emit_tag(e.emitter, "#$(x.tag)")
-    emit_array_sep(e.emitter)
-    encode(e, x.value, false)
-    emit_array_end(e.emitter)
+    if scalar_tagged_value(x)
+        emit(e.emitter, "~$(x.tag)$(x.value)", askey)
+    else
+        emit_tagged_start(e.emitter, x.tag)
+        encode(e, x.value, false)
+        emit_tagged_end(e.emitter)
+    end
 end
 
 function encodes_to_string(e::Encoder, x::TaggedValue)
-    false
+    scalar_tagged_value(x)
 end
 
-function has_stringable_keys(e::Encoder, x::Dict)
-    for k in keys(x)
-	if ! encodes_to_string(e, k)
-            return false
-        end
-    end
-    true
+function has_stringable_keys(e::Encoder, x::AbstractDict)
+    all(k -> stringable(e, k), keys(x))
 end
 
-function encode_map(e::Encoder, x::Dict)
-    emit_array_start(e.emitter)
-    emit(e.emitter, "^ ", true)
+function encode_map(e::Encoder, x::AbstractDict)
+    emit_array_start(e.emitter, 2 * length(x) + 1)
+    emit(e.emitter, MAP_AS_ARRAY, false)
 
     for (k, v) in x
-        emit_array_sep(e.emitter)
-        encode_value(e, k, true)
-        emit_array_sep(e.emitter)
-        encode_value(e, v, false)
+        encode(e, k, true)
+        encode(e, v, false)
     end
 
     emit_array_end(e.emitter)
 end
 
-function encode_cmap(e::Encoder, x::Dict)
-    emit_array_start(e.emitter)
-    emit(e.emitter, "~#cmap", true)
-    emit_array_sep(e.emitter)
-
-    emit_array_start(e.emitter)
-    i = 1
+function encode_cmap(e::Encoder, x::AbstractDict)
+    emit_tagged_start(e.emitter, "cmap")
+    emit_array_start(e.emitter, 2 * length(x))
     for (k, v) in x
-        emit_array_sep(e.emitter, i)
-	i = i + 1
-        encode_value(e, k, false)
-        emit_array_sep(e.emitter)
-        encode_value(e, v, false)
+        encode(e, k, false)
+        encode(e, v, false)
     end
     emit_array_end(e.emitter)
-    emit_array_end(e.emitter)
+    emit_tagged_end(e.emitter)
 end
 
-function encode_verbose_map(e::Encoder, x::Dict)
-    emit_map_start(e.emitter)
-    i = 1
+function encode_verbose_map(e::Encoder, x::AbstractDict)
+    emit_map_start(e.emitter, length(x))
     for (k, v) in x
-        emit_map_sep(e.emitter, i)
-        encode_value(e, k, true)
-        emit_key_sep(e.emitter)
-        encode_value(e, v, false)
-	i = i + i
+        encode(e, k, true)
+        encode(e, v, false)
     end
     emit_map_end(e.emitter)
 end
 
-function encode_value(e::Encoder, x::Dict, askey::Bool)
+function encode_value(e::Encoder, x::AbstractDict, askey::Bool)
     if !has_stringable_keys(e, x)
         encode_cmap(e, x)
     elseif e.verbose
@@ -345,23 +312,7 @@ function encode_value(e::Encoder, x::Dict, askey::Bool)
     end
 end
 
-function encode_value(e::Encoder, x::Dict{AbstractString}, askey::Bool)
-    if e.verbose
-        encode_verbose_map(e, x)
-    else
-        encode_map(e, x)
-    end
-end
-
-function encode_value(e::Encoder, x::Dict{Symbol}, askey::Bool)
-    if e.verbose
-        encode_verbose_map(e, x)
-    else
-        encode_map(e, x)
-    end
-end
-
-function encodes_to_string(e::Encoder, x::Dict)
+function encodes_to_string(e::Encoder, x::AbstractDict)
     false
 end
 
