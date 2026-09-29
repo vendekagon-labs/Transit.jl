@@ -127,8 +127,7 @@ julia --project -e 'using Pkg; Pkg.test()'
 
 The exemplar tests read the example files from
 [transit-format](http://github.com/cognitect/transit-format), which is
-expected in the `test/transit-format` submodule, checked out next to
-Transit.jl, or at `$TRANSIT_FORMAT_DIR`.
+expected to be checked out next to Transit.jl, or at `$TRANSIT_FORMAT_DIR`.
 
 transit-format's verify harness drives `bin/roundtrip`. Install the
 dependencies once with `julia --project -e 'using Pkg; Pkg.instantiate()'`.

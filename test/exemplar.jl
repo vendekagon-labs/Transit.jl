@@ -374,13 +374,10 @@ function findsame(x, col)
     false
 end
 
-# transit-format is expected at $TRANSIT_FORMAT_DIR, in the test/transit-format
-# submodule, or checked out next to this repo.
+# transit-format is expected at $TRANSIT_FORMAT_DIR, or checked out next to
+# this repo.
 function transit_format_dir()
-  get(ENV, "TRANSIT_FORMAT_DIR") do
-    submodule = joinpath(@__DIR__, "transit-format")
-    isdir(joinpath(submodule, "examples")) ? submodule : joinpath(@__DIR__, "..", "..", "transit-format")
-  end
+  get(ENV, "TRANSIT_FORMAT_DIR", joinpath(@__DIR__, "..", "..", "transit-format"))
 end
 
 exemplar_path(name) = joinpath(transit_format_dir(), "examples", "0.8", "simple", name)
