@@ -23,6 +23,10 @@ using Pkg
 Pkg.add(url="https://github.com/vendekagon-labs/Transit.jl")
 ```
 
+or at the Pkg REPL (press `]`): `add https://github.com/vendekagon-labs/Transit.jl`.
+Use `git@github.com:vendekagon-labs/Transit.jl.git` to install over SSH, and
+`Pkg.add(url=..., rev="<tag or commit>")` to pin a version.
+
 ## Usage
 
 To use Transit in a project, import it:
