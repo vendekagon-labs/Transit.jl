@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Julia ${{ matrix.version }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["1.10", "1"]   # the oldest supported (LTS), and the latest
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      TRANSIT_FORMAT_DIR: ${{ github.workspace }}/transit-format
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: cognitect/transit-format
+          path: transit-format
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.version }}
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1
+
+  verify:
+    name: transit-format verify harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: Transit.jl
+      - uses: actions/checkout@v7
+        with:
+          repository: cognitect/transit-format
+          path: transit-format
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1"
+      - run: julia --project=Transit.jl -e 'using Pkg; Pkg.instantiate()'
+      - name: Install the clojure CLI
+        run: |
+          curl -sSL -O https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh
+          chmod +x linux-install.sh
+          sudo ./linux-install.sh
+      - run: Transit.jl/bin/verify transit-format 200
